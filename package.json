@@ -1,0 +1,56 @@
+{
+  "name": "render-etiquetas",
+  "version": "1.0.0",
+  "description": "Emulador visual de etiquetas para impressoras térmicas",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "npm run copy-monaco && concurrently \"npm run dev:react\" \"wait-on http://localhost:3000 && electron .\"",
+    "dev:react": "react-scripts start",
+    "copy-monaco": "node scripts/copy-monaco.js",
+    "prebuild": "npm run copy-monaco",
+    "build": "react-scripts build",
+    "build:electron": "electron-builder",
+    "electron": "electron ."
+  },
+  "keywords": [
+    "electron",
+    "zpl",
+    "epl",
+    "tspl",
+    "labels",
+    "thermal-printer"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@monaco-editor/loader": "^1.6.1",
+    "@monaco-editor/react": "^4.6.0",
+    "bwip-js": "^3.1.0",
+    "canvas": "^2.11.2",
+    "jspdf": "^2.5.1",
+    "monaco-editor": "^0.44.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "concurrently": "^8.2.2",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "wait-on": "^7.2.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}

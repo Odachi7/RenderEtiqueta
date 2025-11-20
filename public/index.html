@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Content Security Policy: Monaco PRECISA de unsafe-eval e worker-src blob: -->
+    <!-- script-src 'unsafe-eval': Necessário para o Monaco usar eval() internamente -->
+    <!-- worker-src blob:: Necessário para criar Web Workers via Blob -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:*; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' http://localhost:*; font-src 'self' data: http://localhost:*; img-src 'self' data: blob: http://localhost:*; connect-src 'self' http://localhost:* ws://localhost:* ws://127.0.0.1:*;" />
+    <meta name="theme-color" content="#000000" />
+    <title>Render Etiquetas</title>
+    <script>
+      // ============================================================================
+      // CONFIGURAÇÃO CRÍTICA: Monaco DEVE usar loader web, NUNCA require() do Node.js
+      // ============================================================================
+      // No Electron com nodeIntegration: true, o Monaco tenta usar require() do Node.js
+      // que interpreta URLs HTTP como caminhos de arquivo. Precisamos interceptar isso.
+      // ============================================================================
+      (function() {
+        if (typeof window !== 'undefined') {
+          // FORÇAR MonacoEnvironment para usar URLs HTTP em desenvolvimento
+          // Isso força o Monaco a usar fetch/XMLHttpRequest, não require() do Node.js
+          // CRÍTICO: Configurar getWorkerUrl para criar workers via Blob (necessário no Electron)
+          window.MonacoEnvironment = {
+            getUrl: function(path) {
+              var relativePath = '/monaco/vs' + path;
+              
+              // Em desenvolvimento, retorna URL HTTP completa
+              if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+                var fullUrl = window.location.origin + relativePath;
+                console.log('[Monaco] MonacoEnvironment.getUrl chamado - path:', path, '-> URL:', fullUrl);
+                return fullUrl;
+              }
+              
+              // Produção (file://): usar caminho relativo
+              console.log('[Monaco] MonacoEnvironment.getUrl chamado - path:', path, '-> relativo:', relativePath);
+              return relativePath;
+            },
+            // CRÍTICO: getWorkerUrl permite criar Web Workers via Blob
+            // Isso é necessário no Electron para evitar bloqueios do CSP
+            getWorkerUrl: function(moduleId, label) {
+              try {
+                var baseUrl = '/monaco/vs';
+                if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+                  baseUrl = window.location.origin + baseUrl;
+                }
+                
+                // Criar worker via Blob para evitar bloqueios do Electron
+                var workerScript = `
+self.MonacoEnvironment = {
+  baseUrl: '${baseUrl}'
+};
+importScripts('${baseUrl}/base/worker/workerMain.js');
+                `.trim();
+                
+                console.log('[Monaco] 🚀 getWorkerUrl CHAMADO! Criando worker para:', label, 'com baseUrl:', baseUrl);
+                console.log('[Monaco] Worker script length:', workerScript.length);
+                
+                var blob = new Blob([workerScript], { type: 'text/javascript' });
+                var blobUrl = URL.createObjectURL(blob);
+                
+                console.log('[Monaco] ✅✅✅ MonacoEnvironment.getWorkerUrl criado para:', label);
+                console.log('[Monaco] Blob URL criada:', blobUrl);
+                return blobUrl;
+              } catch (error) {
+                console.error('[Monaco] ❌ ERRO ao criar worker para:', label, error);
+                throw error;
+              }
+            },
+            // CRÍTICO: Desabilitar NLS para evitar erros 404 com arquivos de localização
+            // Isso faz o Monaco usar inglês embutido sem tentar carregar arquivos NLS externos
+            config: {
+              locale: 'en'
+            },
+            createTrustedTypesPolicy: undefined
+          };
+          
+          console.log('[Monaco] MonacoEnvironment configurado em index.html com getWorkerUrl');
+          console.log('[Monaco] ✅ getWorkerUrl disponível?', typeof window.MonacoEnvironment.getWorkerUrl === 'function');
+          
+          // Testar se o arquivo principal do Monaco é acessível
+          if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+            fetch(window.location.origin + '/monaco/vs/editor/editor.main.js')
+              .then(response => {
+                if (response.ok) {
+                  console.log('[Monaco] ✅ Arquivo editor.main.js acessível via HTTP');
+                } else {
+                  console.error('[Monaco] ❌ Arquivo editor.main.js NÃO acessível - Status:', response.status);
+                }
+              })
+              .catch(error => {
+                console.error('[Monaco] ❌ ERRO ao verificar acessibilidade de editor.main.js:', error);
+              });
+          }
+          
+          // Configurar require.config() global do Monaco AMD loader se disponível
+          // Isso será feito quando o loader do Monaco for carregado
+          // Por enquanto, MonacoEnvironment é suficiente
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <noscript>Você precisa habilitar JavaScript para executar este aplicativo.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
+
