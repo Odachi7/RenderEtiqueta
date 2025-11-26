@@ -22,6 +22,8 @@ export function parseZPL(code) {
     let currentX = 0;
     let currentY = 0;
     let currentFont = '0';
+    let currentModuleWidth = 2; // Largura padrão do módulo em dots
+    let currentWideBarRatio = 3.0; // Proporção barra larga:fina
     let currentFontSize = 30;
 
     for (let i = 0; i < lines.length; i++) {
@@ -34,20 +36,26 @@ export function parseZPL(code) {
           labelHeight = 50;
         }
 
+        // ✅ ZPL: ^LL e ^PW em dots - converter para mm usando DPI
         const llMatch = line.match(/\^LL(\d+)/);
         if (llMatch) {
-          labelHeight = parseFloat(llMatch[1]) * 0.125;
+          const dots = parseFloat(llMatch[1]);
+          labelHeight = (dots * 25.4) / 203; // Assumir 203 DPI padrão
         }
 
         const pwMatch = line.match(/\^PW(\d+)/);
         if (pwMatch) {
-          labelWidth = parseFloat(pwMatch[1]) * 0.125;
+          const dots = parseFloat(pwMatch[1]);
+          labelWidth = (dots * 25.4) / 203; // Assumir 203 DPI padrão
         }
 
+        // ✅ ZPL: ^FO em dots - converter para mm
         const foMatch = line.match(/\^FO(\d+),(\d+)/);
         if (foMatch) {
-          currentX = parseFloat(foMatch[1]) * 0.125;
-          currentY = parseFloat(foMatch[2]) * 0.125;
+          const dotsX = parseFloat(foMatch[1]);
+          const dotsY = parseFloat(foMatch[2]);
+          currentX = (dotsX * 25.4) / 203; // Converter dots para mm
+          currentY = (dotsY * 25.4) / 203;
         }
 
         const aMatch = line.match(/\^A([A-Z0-9]+),?(\d+)?,?(\d+)?/);
@@ -74,6 +82,14 @@ export function parseZPL(code) {
           }
         }
 
+        // ✅ Parser ZPL melhorado para ^BY (module width) e ^BC (barcode)
+        const byMatch = line.match(/\^BY(\d+)?,?(\d+)?,?(\d+)?/);
+        if (byMatch) {
+          // ^BY define largura do módulo para próximos códigos de barras
+          currentModuleWidth = parseInt(byMatch[1]) || 2; // Padrão 2 dots
+          currentWideBarRatio = parseFloat(byMatch[2]) || 3.0; // Padrão 3:1
+        }
+
         const bcMatch = line.match(/\^BC([A-Z]),?(\d+)?,?([YN])?/);
         if (bcMatch && i + 1 < lines.length) {
           const fdMatchNext = lines[i + 1].match(/\^FD(.+?)(\^FS|$)/);
@@ -84,24 +100,36 @@ export function parseZPL(code) {
               y: currentY,
               format: 'code128',
               value: fdMatchNext[1].trim(),
-              height: parseFloat(bcMatch[2] || 50) * 0.125,
+              height: ((parseFloat(bcMatch[2] || 50) * 25.4) / 203), // Altura: dots para mm
+              moduleWidth: currentModuleWidth || 2, // Largura do módulo em dots
+              wideBarRatio: currentWideBarRatio || 3.0,
+              includeText: bcMatch[3] !== 'N', // Y=sim, N=não
               rotation: bcMatch[1] === 'R' ? 90 : 0
             });
             i++;
           }
         }
 
-        const bqMatch = line.match(/\^BQ([A-Z]),(\d+)/);
+        // ✅ Parser ZPL correto para ^BQN (QR Code Zebra)
+        // Formato: ^BQN,2,<tamanho> onde N=normal, 2=modelo, tamanho=módulo
+        const bqMatch = line.match(/\^BQ([A-Z]),?(\d+)?,?(\d+)?/);
         if (bqMatch && i + 1 < lines.length) {
           const fdMatchNext = lines[i + 1].match(/\^FD(.+?)(\^FS|$)/);
           if (fdMatchNext) {
+            const orientation = bqMatch[1]; // N=normal, R=rotated, etc
+            const model = parseInt(bqMatch[2]) || 2; // Modelo QR (1 ou 2)
+            const magnification = parseInt(bqMatch[3]) || 3; // Fator de magnificação
+            
             objects.push({
               type: 'qrcode',
               x: currentX,
               y: currentY,
               value: fdMatchNext[1].trim(),
-              size: parseFloat(bqMatch[2]) * 0.125,
-              rotation: bqMatch[1] === 'R' ? 90 : 0
+              // ✅ Tamanho baseado no padrão Zebra: magnification define o módulo
+              size: ((magnification * 25.4) / 203), // Magnification para mm
+              model: model,
+              magnification: magnification,
+              rotation: orientation === 'R' ? 90 : 0
             });
             i++;
           }
@@ -120,10 +148,13 @@ export function parseZPL(code) {
           });
         }
 
+        // ✅ ZPL: ^LH (Label Home) em dots - converter para mm
         const lhMatch = line.match(/\^LH(\d+),(\d+)/);
         if (lhMatch) {
-          currentX = parseFloat(lhMatch[1]) * 0.125;
-          currentY = parseFloat(lhMatch[2]) * 0.125;
+          const dotsX = parseFloat(lhMatch[1]);
+          const dotsY = parseFloat(lhMatch[2]);
+          currentX = (dotsX * 25.4) / 203; // Offset em mm
+          currentY = (dotsY * 25.4) / 203;
         }
 
       } catch (err) {
@@ -167,72 +198,189 @@ export function parseEPL(code) {
       if (!line) continue;
 
       try {
-        const qMatch = line.match(/^Q(\d+),(\d+)/);
-        if (qMatch) {
-          labelWidth = parseFloat(qMatch[1]) * 0.125;
-          labelHeight = parseFloat(qMatch[2]) * 0.125;
+        // ✅ EPL: N comando - Clear buffer
+        if (line.match(/^N$/)) {
+          // Limpar buffer - resetar objetos se necessário
+          continue;
         }
 
-        const aMatch = line.match(/^A(\d+),(\d+),(-?\d+),(\d+),(\d+),(\d+),([YN]),"(.+?)"/);
+        // ✅ EPL: q comando - Largura da etiqueta em dots (MANTER EM DOTS!)
+        const qWidthMatch = line.match(/^q(\d+)$/i);
+        if (qWidthMatch) {
+          const widthDots = parseFloat(qWidthMatch[1]);
+          labelWidth = widthDots; // EPL trabalha em DOTS, não mm!
+        }
+
+        // ✅ EPL: Q comando - Altura da etiqueta em dots (Q altura,gap)
+        const qHeightMatch = line.match(/^Q(\d+),?(\d+)?$/);
+        if (qHeightMatch) {
+          const heightDots = parseFloat(qHeightMatch[1]);
+          labelHeight = heightDots; // EPL trabalha em DOTS, não mm!
+          // gap (segundo parâmetro) ignorado no preview
+        }
+
+        // ✅ EPL: A comando - Texto (A x,y,rotation,font,h_mult,v_mult,reverse,"texto")
+        const aMatch = line.match(/^A(\d+),(\d+),([0-3]),([1-5]),(\d+),(\d+),([NR]),"(.+?)"/);
         if (aMatch) {
-          const x = parseFloat(aMatch[1]) * 0.125;
-          const y = parseFloat(aMatch[2]) * 0.125;
-          const rotation = parseFloat(aMatch[3]);
-          const font = aMatch[4];
+          const x = parseFloat(aMatch[1]); // DOTS - não converter!
+          const y = parseFloat(aMatch[2]); // DOTS - não converter!
+          const rotation = parseFloat(aMatch[3]); // 0,1,2,3 = 0°,90°,180°,270°
+          const font = aMatch[4]; // 1-5
           const hMult = parseFloat(aMatch[5]);
           const vMult = parseFloat(aMatch[6]);
+          const reverse = aMatch[7]; // N=normal, R=invertido
           const text = aMatch[8];
 
-          const fontSizeMap = { '1': 7, '2': 10, '3': 15, '4': 20, '5': 30 };
-          const fontSize = (fontSizeMap[font] || 15) * hMult;
+          // ✅ Tabela de fontes EPL REAL em dots
+          const fontSizeMap = { 
+            '1': 20,  // Font 1: 12×20 dots
+            '2': 30,  // Font 2: 18×30 dots  
+            '3': 40,  // Font 3: 24×40 dots
+            '4': 50,  // Font 4: 32×50 dots
+            '5': 75   // Font 5: 45×75 dots
+          };
+          const baseFontSize = fontSizeMap[font] || 20;
+          const fontSize = baseFontSize * Math.max(hMult, vMult);
 
           objects.push({
             type: 'text',
-            x: x,
+            x: x, // Coordenadas em DOTS
             y: y,
-            fontSize: fontSize,
-            fontFamily: `EPL${font}`,
+            fontSize: fontSize, // Tamanho em dots/pixels
+            fontFamily: 'monospace', // EPL usa fonte monoespaçada
             text: text,
-            rotation: rotation
+            rotation: rotation * 90, // Converter para graus
+            reverse: reverse === 'R'
           });
         }
 
-        const bMatch = line.match(/^B(\d+),(\d+),(-?\d+),(\d+),(\d+),(\d+),(\d+),"(.+?)"/);
+        // ✅ EPL: B comando - Código de barras (B x,y,rotation,bc_type,narrow,wide,height,human_readable,"value")
+        const bMatch = line.match(/^B(\d+),(\d+),([0-3]),([0-9A-Z]),(\d+),(\d+),(\d+),([BN]),"(.+?)"/);
         if (bMatch) {
+          const x = parseFloat(bMatch[1]); // DOTS - não converter!
+          const y = parseFloat(bMatch[2]); // DOTS - não converter!
+          const rotation = parseFloat(bMatch[3]); // 0,1,2,3 = 0°,90°,180°,270°
+          const barcodeType = bMatch[4];
+          const narrow = parseFloat(bMatch[5]); // Espessura barra fina em dots
+          const wide = parseFloat(bMatch[6]);   // Espessura barra grossa em dots
+          const height = parseFloat(bMatch[7]); // Altura em dots
+          const humanReadable = bMatch[8]; // B=sim, N=não
+          const value = bMatch[9];
+
           objects.push({
             type: 'barcode',
-            x: parseFloat(bMatch[1]) * 0.125,
-            y: parseFloat(bMatch[2]) * 0.125,
-            format: getBarcodeFormat(bMatch[4]),
-            value: bMatch[8],
-            height: parseFloat(bMatch[5]) * 0.125,
-            rotation: parseFloat(bMatch[3])
+            x: x, // Coordenadas em DOTS
+            y: y,
+            format: getEPLBarcodeFormat(barcodeType),
+            value: value,
+            height: height, // Altura em dots
+            rotation: rotation * 90,
+            moduleWidth: narrow, // Largura em dots
+            wideBarRatio: wide / narrow,
+            includeText: humanReadable === 'B'
           });
         }
 
+        // ✅ EPL: LO comando - Linha (LO x,y,width,height)
         const loMatch = line.match(/^LO(\d+),(\d+),(\d+),(\d+)/);
         if (loMatch) {
+          const x = parseFloat(loMatch[1]); // DOTS
+          const y = parseFloat(loMatch[2]); // DOTS
+          const width = parseFloat(loMatch[3]); // DOTS
+          const height = parseFloat(loMatch[4]); // DOTS
+
           objects.push({
             type: 'line',
-            x: parseFloat(loMatch[1]) * 0.125,
-            y: parseFloat(loMatch[2]) * 0.125,
-            width: parseFloat(loMatch[3]) * 0.125,
-            height: parseFloat(loMatch[4]) * 0.125,
-            lineWidth: 1
+            x: x,
+            y: y,
+            x2: x + width,
+            y2: y + height,
+            lineWidth: Math.min(width, height) // Espessura em dots
           });
         }
 
-        const boMatch = line.match(/^BO(\d+),(\d+),(\d+),(\d+),(\d+)/);
-        if (boMatch) {
+        // ✅ EPL: X comando - Caixa vazada (X x,y,width,height,line_thickness)
+        const xMatch = line.match(/^X(\d+),(\d+),(\d+),(\d+),(\d+)/);
+        if (xMatch) {
+          const x = parseFloat(xMatch[1]); // DOTS
+          const y = parseFloat(xMatch[2]); // DOTS
+          const width = parseFloat(xMatch[3]); // DOTS
+          const height = parseFloat(xMatch[4]); // DOTS
+          const lineWidth = parseFloat(xMatch[5]); // DOTS
+
           objects.push({
             type: 'box',
-            x: parseFloat(boMatch[1]) * 0.125,
-            y: parseFloat(boMatch[2]) * 0.125,
-            width: parseFloat(boMatch[3]) * 0.125,
-            height: parseFloat(boMatch[4]) * 0.125,
-            lineWidth: parseFloat(boMatch[5]) * 0.125,
+            x: x,
+            y: y,
+            width: width,
+            height: height,
+            lineWidth: lineWidth,
             filled: false
           });
+        }
+
+        // ✅ EPL: R comando - Caixa preenchida (R x,y,width,height)
+        const rMatch = line.match(/^R(\d+),(\d+),(\d+),(\d+)/);
+        if (rMatch) {
+          const x = parseFloat(rMatch[1]); // DOTS
+          const y = parseFloat(rMatch[2]); // DOTS
+          const width = parseFloat(rMatch[3]); // DOTS
+          const height = parseFloat(rMatch[4]); // DOTS
+
+          objects.push({
+            type: 'box',
+            x: x,
+            y: y,
+            width: width,
+            height: height,
+            lineWidth: 0,
+            filled: true
+          });
+        }
+
+        // ✅ EPL: GW comando - Imagem/Bitmap (GW x,y,bytes_per_row,height,<hexdata>)
+        const gwMatch = line.match(/^GW(\d+),(\d+),(\d+),(\d+),?(.*)$/);
+        if (gwMatch) {
+          const x = parseFloat(gwMatch[1]); // DOTS
+          const y = parseFloat(gwMatch[2]); // DOTS
+          const bytesPerRow = parseFloat(gwMatch[3]);
+          const height = parseFloat(gwMatch[4]); // DOTS
+          let hexData = gwMatch[5] || ''; // Dados hex podem estar na mesma linha ou nas próximas
+          
+          // Se não há dados hex na mesma linha, ler as próximas linhas
+          if (!hexData || hexData.trim() === '') {
+            const hexLines = [];
+            let j = i + 1;
+            while (j < lines.length && hexLines.length < height) {
+              const hexLine = lines[j].trim();
+              if (hexLine && /^[0-9A-F]+$/i.test(hexLine)) {
+                hexLines.push(hexLine);
+                j++;
+              } else {
+                break;
+              }
+            }
+            hexData = hexLines.join('');
+            i = j - 1; // Pular as linhas de dados hex processadas
+          }
+          
+          hexData = hexData.replace(/\s/g, ''); // Remover espaços
+
+          objects.push({
+            type: 'image',
+            x: x,
+            y: y,
+            width: bytesPerRow * 8, // 8 pixels por byte = largura em dots
+            height: height, // Altura em dots
+            bytesPerRow: bytesPerRow,
+            hexData: hexData
+          });
+        }
+
+        // ✅ EPL: P comando - imprimir etiqueta (ignorar no preview)
+        const pMatch = line.match(/^P(\d+)?,?(\d+)?/);
+        if (pMatch) {
+          continue;
         }
 
       } catch (err) {
@@ -256,11 +404,31 @@ export function parseEPL(code) {
 }
 
 function getBarcodeFormat(type) {
+  // Mapeamento para ZPL (manter compatibilidade)
   const formats = {
     '3': 'code128',
     '4': 'code39',
     '5': 'ean13',
     '8': 'code93'
+  };
+  return formats[type] || 'code128';
+}
+
+function getEPLBarcodeFormat(type) {
+  // ✅ Mapeamento correto dos tipos de código de barras EPL
+  const formats = {
+    '1': 'code128',       // Code 128 (padrão EPL)
+    '2': 'upca',          // UPC-A
+    '3': 'code39',        // Code 39
+    '4': 'upce',          // UPC-E
+    '5': 'ean13',         // EAN-13
+    '6': 'ean8',          // EAN-8
+    '7': 'interleaved2of5', // Interleaved 2 of 5
+    '8': 'code93',        // Code 93
+    '9': 'codabar',       // Codabar
+    'A': 'code128',       // Code 128 subset A
+    'B': 'code128',       // Code 128 subset B
+    'C': 'code128'        // Code 128 subset C
   };
   return formats[type] || 'code128';
 }

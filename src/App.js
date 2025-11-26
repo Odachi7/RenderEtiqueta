@@ -21,7 +21,7 @@ import ConsolePanel from './components/ConsolePanel';
 import CanvasEngine from './utils/canvasEngine';
 import { parseZPL, parseEPL, parseTSPL, parseCPCL, parseCustom } from './utils/parsers';
 import MonacoEditor from './components/MonacoEditor';
-import ResizablePreview from './components/ResizablePreview';
+import ZoomablePreview from './components/ZoomablePreview';
 
 // Verificar se o loader.js está acessível ANTES de usar o Editor
 if (typeof window !== 'undefined') {
@@ -63,8 +63,31 @@ function getDefaultCode(lang) {
 ^FO50,100^BCN,50,Y,N,N^FD1234567890^FS
 ^XZ`,
       epl: `N
-A50,40,0,3,1,1,N,"Hello World"
-B10,10,0,3,100,1,1,"1234567890"
+q400
+Q200,24
+A20,20,0,3,1,1,N,"PRODUTO TESTE"
+A10,120,0,1,1,1,N,"R$ 25,90"
+B10,60,0,1,2,4,50,N,"123456789012"
+GW250,20,3,21,
+FFFFFFFFFF
+F800001FFF
+F8111C1FFF
+F8111C1FFF
+F8111C1FFF
+F800001FFF
+F8FFFFFFEF
+F800000000
+F8E38E38EF
+F8E38E38EF
+F8E38E38EF
+F800000000
+F8FFFFFFEF
+F800001FFF
+F8111C1FFF
+F8111C1FFF
+F8111C1FFF
+F800001FFF
+FFFFFFFFFF
 P1`,
       tspl: `SIZE 100 mm, 50 mm
 TEXT 20,40,"3",0,1,1,"Hello World"
@@ -93,12 +116,13 @@ function App() {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // O CanvasEngine renderiza o canvas com dimensões precisas baseadas no tamanho da etiqueta
-    // O ResizablePreview controla o tamanho visual do container
+    // O CanvasEngine renderiza no DPI padrão da impressora
+    // O ZoomablePreview controla o zoom visual via CSS transform
     const engine = new CanvasEngine(canvas, {
-      zoom: zoom,
+      zoom: 1, // Sempre 1 - zoom controlado pelo ZoomablePreview
       showGrid: showGrid,
-      dpi: 203 // DPI da impressora térmica típica
+      dpi: 203, // DPI padrão das impressoras térmicas
+      language: language
     });
 
     await engine.render(data.objects, data.labelWidth, data.labelHeight);
@@ -234,27 +258,25 @@ function App() {
         </div>
 
         {/* Preview (direita) */}
-        <div className="w-1/2 bg-gray-800 p-4 overflow-auto flex items-center justify-center">
-          <ResizablePreview
-            defaultWidth={parsedData.labelWidth}
-            defaultHeight={parsedData.labelHeight}
-            minWidth={100}
-            minHeight={50}
-            className="bg-gray-100 p-4 rounded shadow-lg"
+        <div className="w-1/2 bg-gray-900 relative">
+          <ZoomablePreview
+            labelWidth={parsedData.labelWidth}
+            labelHeight={parsedData.labelHeight}
+            language={language}
+            className="w-full h-full"
           >
+            {/* Canvas ocupa exatamente o tamanho da etiqueta */}
             <canvas
               ref={canvasRef}
-              className="border border-gray-300"
               style={{ 
-                maxWidth: '100%', 
-                maxHeight: '100%',
-                width: 'auto',
-                height: 'auto',
                 display: 'block',
-                margin: '0 auto'
+                backgroundColor: 'white',
+                width: '100%',
+                height: '100%',
+                imageRendering: 'pixelated' // Manter pixels nítidos
               }}
             />
-          </ResizablePreview>
+          </ZoomablePreview>
         </div>
       </div>
 
